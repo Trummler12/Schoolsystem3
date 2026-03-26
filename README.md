@@ -31,6 +31,9 @@ cd frontend && npm install && npm run dev
 
 # DB seeden (einmalig oder nach Reset)
 cd backend && npm run seed
+
+# Datenpipeline-Skripte (nur bei Bedarf)
+cd scripts && npm install
 ```
 
 ## Datenstruktur (`data/`)
