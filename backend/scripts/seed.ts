@@ -2,9 +2,9 @@ import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 
-// .env liegt im Repo-Root (zwei Ebenen über scripts/)
+// .env liegt im Repo-Root: backend/scripts/ → backend/ → Schoolsystem3/
 const __dirname = dirname(fileURLToPath(import.meta.url))
-dotenv.config({ path: resolve(__dirname, '../../../.env') })
+dotenv.config({ path: resolve(__dirname, '../../.env') })
 
 import mongoose from 'mongoose'
 
