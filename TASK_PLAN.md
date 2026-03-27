@@ -38,7 +38,7 @@ Ziel: Topics und Tags in MongoDB, REST-API, TopicsList und TopicDetail im Fronte
 
 | Modul | Plan | Status |
 |-------|------|--------|
-| Backend (Models, Seeder, Routes) | [backend/TASK_PLAN.md](./backend/TASK_PLAN.md) | 🔄 IN PROGRESS |
+| Backend (Models, Seeder, Routes) | [backend/TASK_PLAN.md](./backend/TASK_PLAN.md) | 🔄 Planung ✅ — **nächster Schritt: Block A1** (`backend/src/models/Tag.ts`) |
 | Frontend (Router, Views) | [frontend/TASK_PLAN.md](./frontend/TASK_PLAN.md) | ⏳ wartet auf Backend Slice 2a |
 
 Cross-Slice-Abhängigkeit:
