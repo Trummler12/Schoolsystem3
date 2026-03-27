@@ -14,11 +14,27 @@ function escapeRegex(s: string): string {
 
 export async function topicRoutes(app: FastifyInstance): Promise<void> {
 
-  // GET /api/v1/topics?tag=<tagId>
-  app.get<{ Querystring: { tag?: string } }>(
+  // GET /api/v1/topics
+  app.get<{
+    Querystring: {
+      tag?: string
+      maxLayer?: string
+      showCourses?: string
+      showAchievements?: string
+      sortBy?: string
+      sortDirection?: string
+    }
+  }>(
     '/api/v1/topics',
     async (request): Promise<TopicListResponse> => {
-      const { tag } = request.query
+      const {
+        tag,
+        maxLayer,
+        showCourses = 'true',
+        showAchievements = 'true',
+        sortBy = 'name',
+        sortDirection = 'asc',
+      } = request.query
 
       const filter: Record<string, unknown> = {}
 
@@ -30,8 +46,29 @@ export async function topicRoutes(app: FastifyInstance): Promise<void> {
         filter['tags.tagId'] = tagId
       }
 
+      if (maxLayer !== undefined) {
+        const layer = Number(maxLayer)
+        if (!Number.isInteger(layer) || layer < 1) {
+          throw new BadRequestError(`Invalid maxLayer: ${maxLayer}`)
+        }
+        filter['layer'] = { $lte: layer }
+      }
+
+      if (showCourses === 'false') {
+        filter['typeId'] = { ...(filter['typeId'] as object ?? {}), $nin: [4, 5] }
+      }
+
+      if (showAchievements === 'false') {
+        const existing = (filter['typeId'] as { $nin?: number[] } | undefined) ?? {}
+        filter['typeId'] = { ...existing, $nin: [...(existing.$nin ?? []), 3] }
+      }
+
+      const sortField = sortBy === 'layer' ? 'layer' : 'name'
+      const sortOrder = sortDirection === 'desc' ? -1 : 1
+
       const docs = await Topic.find(filter)
         .select('_id name typeId typeName layer description tags')
+        .sort({ [sortField]: sortOrder })
         .lean()
 
       const items: TopicSummaryDto[] = docs.map((d) => ({
