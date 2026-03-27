@@ -17,6 +17,20 @@ export async function get<T>(path: string, params?: Record<string, string>): Pro
   return res.json() as Promise<T>
 }
 
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const url = BASE + path
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}))
+    throw new ApiError(res.status, (b as { message?: string }).message ?? res.statusText, b)
+  }
+  return res.json() as Promise<T>
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly body: unknown

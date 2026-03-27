@@ -4,6 +4,7 @@ import { Layout } from '../components/Layout'
 
 const TopicsListView = lazy(() => import('../views/TopicsListView'))
 const TopicDetailView = lazy(() => import('../views/TopicDetailView'))
+const InterestSearchView = lazy(() => import('../views/InterestSearchView'))
 
 export const router = createBrowserRouter([
   {
@@ -24,6 +25,14 @@ export const router = createBrowserRouter([
         element: (
           <Suspense fallback={<p>Loading…</p>}>
             <TopicDetailView />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'interesting',
+        element: (
+          <Suspense fallback={<p>Loading…</p>}>
+            <InterestSearchView />
           </Suspense>
         ),
       },

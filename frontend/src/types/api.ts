@@ -56,3 +56,42 @@ export interface TopicListResponse {
 export type TopicResolutionResponse =
   | { resolutionStatus: 'EXACT'; topic: TopicDetailDto }
   | { resolutionStatus: 'AMBIGUOUS'; candidates: TopicSummaryDto[] }
+
+// ── Interest Search ───────────────────────────────────────────────────────────
+
+export interface InterestMatchedTagDto {
+  tagId: number
+  label: string
+  interestWeight: number
+}
+
+export interface InterestTopicMatchedTagDto {
+  tagId: number
+  label: string
+  interestWeight: number
+  topicWeight: number
+  contribution: number
+}
+
+export interface InterestTopicResultDto {
+  id: string
+  name: string
+  typeName: string
+  layer: number
+  score: number
+  matchedTags?: InterestTopicMatchedTagDto[]
+}
+
+export interface InterestSearchRequestDto {
+  interestsText: string
+  language?: string
+  maxResults?: number
+  explainMatches?: boolean
+}
+
+export interface InterestSearchResponseDto {
+  interestsText: string
+  usedLanguage: string
+  matchedTags: InterestMatchedTagDto[]
+  topics: InterestTopicResultDto[]
+}
