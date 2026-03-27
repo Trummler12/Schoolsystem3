@@ -623,6 +623,330 @@ Frontend (nach Slice 2b Frontend-Block):
 
 ---
 
-# Slice 2c: Resources + Scoring ⏳
+# Slice 2c: Resources ⏳
+<a name="slice-2c"></a>
 
-*(Wird nach Abschluss von Slice 2b ergänzt)*
+## Mode & Score
+Mode: plan-gate, Score: 8 (>2 files +2, cross-file coupling +2, DB/Schema +2, no tests +1, diff >50 LOC +1)
+
+## Task Scope Paths
+- AKSEP/Schoolsystem3/backend/**
+- AKSEP/Schoolsystem3/backend/TASK_PLAN.md
+
+---
+
+## Discovery
+
+### Datenlage
+
+| Datei | Zeilen | Spalten | Notizen |
+|-------|--------|---------|---------|
+| `t_source.csv` | 2199 | `sourceID, source_typeID, source_URL, sauthorID, source_title, description, created, updated, sa_resource` | alle haben `sa_resource=1` |
+| `ct_resource_tags.csv` | 10992 | `resourceID, tagID, weight` | resourceID = sourceID; weight 1–5 |
+| `t_source_author.csv` | ~n | `sauthorID, sauthor_name, sauthor_URL, ...` | YouTube-Channels |
+| `t_source_type.csv` | 3 | `stypeID, stype_name` | 0=Web Page, 1=YouTube Video, 2=YouTube Playlist |
+| `ct_resource_to_topic.csv` | leer | — | Von Phase 3 vorgesehen; wird in Slice 2c durch Overlap-Berechnung ersetzt |
+| `t_resource.csv` | leer | — | Nicht verwendet; Sources sind direkt die Resources |
+
+**Schlussfolgerung:** Jede Source (sa_resource=1) ist direkt eine Resource. `t_resource.csv` und `ct_resource_to_topic.csv` werden nicht für die Seed-Pipeline benötigt — die Verbindung wird via Tag-Overlap berechnet.
+
+### Bestehendes (Stand nach Slice 2b)
+
+- `Topic`-Mongoose-Schema: kein `resources`-Feld (Placeholder war nur im DTO)
+- `TopicDetailDto.resources: []` — untypisierter leerer Array (Placeholder)
+- `backend/src/models/index.ts` — exportiert `Tag` und `Topic`
+- Seeder (`seed.ts`) — lädt 6 CSVs, kennt Sources noch nicht
+
+### Overlap-Berechnung (Verbindung Resource ↔ Topic)
+
+```
+overlapScore(source S, topic T) = Σ sourceTagWeight[i] × topicTagWeight[i]
+                                    für alle Tags i ∈ S.tags ∩ T.tags
+```
+
+Gleiche Formel wie der Interest-Search-Scoring-Algorithmus — konzeptuell konsistent.
+
+**Implementierungsstrategie (effizient, O(quellen × avgTags)):**
+1. Aus `ct_resource_tags.csv`: Map aufbauen `tagId → [{sourceId, weight}]`
+2. Für jedes Topic: Tags iterieren → über Lookup-Map alle Sources finden die diesen Tag haben → Score akkumulieren
+3. Pro Topic: Top-10 Sources nach Score DESC behalten (score > 0)
+4. Ergebnis: Array `[{sourceId, overlapScore}]` — in Topic-Dokument eingebettet
+
+Mit 723 Topics × ~10992 Tag-Mappings ist das ein handlicher einmaliger Seeding-Schritt.
+
+### Architekturentscheid: Wo werden Resources gespeichert?
+
+**Option A — Nur IDs in Topic einbetten, Source-Details bei Bedarf nachladen (gewählt):**
+- Topic bekommt `topResources: [{sourceId, overlapScore}]` (max 10)
+- `GET /api/v1/topics/:id` lädt Topic → dann `Source.find({ _id: { $in: [...] } })` → mergt
+- Vorteil: Topic-Dokumente bleiben schlank; Source-Daten nicht dupliziert
+- Nachteil: 2 DB-Queries pro Detail-Request (aber beide sind kleinfisching + indexed)
+
+**Option B — Full ResourceDto in Topic einbetten:** Topic-Dokumente würden unnötig aufgebläht.
+
+**Option C — Separate ResourceTopic-Collection:** Überengineering für die aktuelle Datenmenge.
+
+→ **Option A** gewählt.
+
+### Resource DTO
+
+```ts
+interface ResourceDto {
+  id: number          // sourceID
+  title: string
+  url: string
+  description: string // gekürzt auf 300 Zeichen wenn zu lang? → Nein, Volltext
+  typeName: string    // denormalisiert (YouTube Video / Web Page / YouTube Playlist)
+  authorName: string  // denormalisiert aus t_source_author
+  overlapScore: number
+}
+```
+
+Status: READY
+
+---
+
+## Planning
+
+### Komponentenstruktur
+
+```
+backend/src/
+├── models/
+│   ├── Source.ts           # NEU — Mongoose-Schema für Sources
+│   └── index.ts            # Source-Export ergänzen
+├── types/
+│   └── api.ts              # ResourceDto ergänzen; TopicDetailDto.resources typisieren
+└── routes/
+    └── topics.ts           # TopicDetail-Handler: Source-Lookup ergänzen
+
+backend/scripts/
+└── seed.ts                 # Source-Seeding + Overlap-Berechnung + Topic.topResources befüllen
+```
+
+### Source-Mongoose-Schema
+
+```ts
+SourceSchema: {
+  _id: Number,          // sourceID
+  typeId: Number,       // source_typeID
+  typeName: String,     // denormalisiert aus t_source_type
+  url: String,          // source_URL
+  authorId: Number,     // sauthorID
+  authorName: String,   // denormalisiert aus t_source_author
+  title: String,
+  description: String,
+  createdAt: Date,
+  updatedAt: Date,
+}
+```
+
+`ct_resource_tags`-Daten werden NICHT im Source-Dokument gespeichert — sie werden nur während des Seedings für die Overlap-Berechnung verwendet und danach verworfen.
+
+### Topic-Schema-Erweiterung
+
+```ts
+// Neues Subdokument (ohne _id):
+TopicResourceRefSchema: { sourceId: Number, overlapScore: Number }
+
+// Im TopicSchema ergänzen:
+topResources: { type: [TopicResourceRefSchema], default: [] }
+```
+
+### Seeder-Erweiterung (seed.ts)
+
+Neue Funktionen:
+1. `loadSourceAuthors()` → `Map<number, string>` (authorId → authorName; fehlende ID → `""`)
+2. `loadSourceTypes()` → `Map<number, string>` (typeId → typeName)
+3. `seedSources(sourceRows, authorMap, typeMap)` → inserted Sources
+   - CSV-Spalten: `created` → `createdAt`, `updated` → `updatedAt` (Umbenennung beim Mapping)
+   - Unbekannter `sauthorID`: `authorMap.get(id) ?? ''`
+4. `computeTopicResources(topicDocs, resourceTagRows)` → Map<topicId, [{sourceId, overlapScore}]>
+   - `topicDocs` bringen `.tags: [{tagId, weight}]` mit (bereits geseedet)
+   - `resourceTagRows` → invertierter Index: `Map<tagId, [{sourceId, weight}]>`
+   - Pro Topic: Tags iterieren → Scores über den Index akkumulieren → Top-10 nach Score DESC (score > 0)
+5. In `main()`: Sources nach Topics seeden; `computeTopicResources()` aufrufen; Topics mit `topResources` updaten (bulkWrite)
+
+Reihenfolge in `main()`:
+```
+1. Tags seeden (bereits vorhanden)
+2. Topics seeden (bereits vorhanden)
+3. Sources seeden (NEU)
+4. topResources berechnen + in Topics schreiben (NEU — bulkWrite updateOne)
+```
+
+Reset-Modus (`--reset`): `Source.deleteMany()` ergänzen.
+
+### Route-Änderung (topics.ts)
+
+`GET /api/v1/topics/:topicId` (EXACT-Pfad) — nach Topic-Lookup:
+```ts
+const refs = topic.topResources   // [{sourceId, overlapScore}] — bereits nach Score sortiert
+const sources = await Source.find({ _id: { $in: refs.map(r => r.sourceId) } })
+// Source.find({ $in: [...] }) garantiert KEINE Reihenfolge → nach Merge explizit sortieren:
+// scoreMap aufbauen (sourceId → overlapScore aus refs), dann sources.sort() nach Score DESC
+```
+
+### DTO-Änderungen
+
+`backend/src/types/api.ts`:
+```ts
+// NEU:
+export interface ResourceDto {
+  id: number
+  title: string
+  url: string
+  description: string
+  typeName: string
+  authorName: string
+  overlapScore: number
+}
+
+// ÄNDERUNG:
+TopicDetailDto.resources: ResourceDto[]   // war: resources: []
+```
+
+Status: READY FOR APPROVAL
+
+---
+
+## Pre-Approval Checklist
+- [x] Discovery: Status = READY
+- [x] Planning: Status = READY FOR APPROVAL
+- [x] Steps atomar (pro File + Anchor/Range)
+- [x] Developer Interactions vorhanden (leer)
+- [x] Checks & Pass Criteria vorhanden
+- [x] Mode & Score gesetzt
+- [ ] git status clean (nur TASK_PLAN.md/TASK_DOCS.md geändert — nach Plan-Commit prüfen)
+
+---
+
+## Implementation Steps — Slice 2c Backend
+
+0) **Plan Sync:** Dieses Dokument laden; Developer Interactions prüfen.
+
+### Block O: Source-Model
+
+**O1)** `backend/src/models/Source.ts` — anlegen:
+```
+SourceSchema: { _id: Number, typeId, typeName, url, authorId, authorName, title, description, createdAt, updatedAt }
+export const Source = mongoose.model('Source', SourceSchema)
+```
+
+**O2)** `backend/src/models/Topic.ts` — `TopicResourceRefSchema` + `topResources`-Feld ergänzen:
+```ts
+TopicResourceRefSchema: { sourceId: Number, overlapScore: Number } (_id: false)
+TopicSchema: topResources: { type: [TopicResourceRefSchema], default: [] }
+```
+
+**O3)** `backend/src/models/index.ts` — `Source` re-exportieren
+
+→ **Commit nach O1–O3:**
+```
+feat(backend/models): add Source model and topResources ref to Topic;
+
+- Source: _id=sourceId, typeName/authorName denormalized, no tag data
+- Topic.topResources: [{sourceId, overlapScore}] pre-computed at seeding
+```
+
+---
+
+### Block P: Types — ResourceDto
+
+**P1)** `backend/src/types/api.ts`:
+- `ResourceDto`-Interface ergänzen
+- `TopicDetailDto.resources: ResourceDto[]` typisieren (war `resources: []`)
+
+→ **Commit nach P1:**
+```
+feat(backend/types): add ResourceDto and type TopicDetailDto.resources
+```
+
+---
+
+### Block Q: Seeder-Erweiterung
+
+**Q1)** `backend/scripts/seed.ts` — neue Funktionen ergänzen:
+- `loadSourceAuthors()` → `Map<number, string>`
+- `loadSourceTypes()` → `Map<number, string>`
+- `seedSources(rows, authorMap, typeMap)` → Bulk-Insert in Source-Collection
+- `computeTopicResources(topics, resourceTagRows, topicTagMap)` → Overlap-Scores berechnen, Top-10 pro Topic
+- `main()` erweitern: Sources seeden → computeTopicResources → bulkWrite `updateOne` für Topic.topResources
+- Reset-Modus: `Source.deleteMany()` ergänzen
+
+→ **Commit nach Q1:**
+```
+feat(backend/seeder): seed Sources and compute topic-resource overlaps;
+
+- loads t_source, t_source_author, t_source_type, ct_resource_tags
+- computes overlap score = Σ(sourceTagWeight × topicTagWeight) per tag
+- writes top-10 sources per topic into Topic.topResources
+```
+
+---
+
+### Block R: Route — TopicDetail Resources befüllen
+
+**R1)** `backend/src/routes/topics.ts` — EXACT-Pfad in `GET /api/v1/topics/:topicId` erweitern:
+- `topic.topResources` refs auslesen
+- `Source.find({ _id: { $in: sourceIds } })` — Source-Details nachladen
+- Merge: Sources mit overlapScore anreichern, nach overlapScore DESC sortieren
+- Als `resources: ResourceDto[]` in die Response einbauen
+
+→ **Commit nach R1:**
+```
+feat(backend/routes): populate resources[] in topic detail from Source collection;
+
+- second DB query per detail request (indexed _id lookup, negligible cost)
+- resources sorted by pre-computed overlap score DESC
+```
+
+---
+
+N) **Final @codex Sweep:** alle touched/new Files + Control Paths prüfen.
+
+---
+
+## Developer Interactions
+*(leer)*
+
+---
+
+## Checks & Pass Criteria
+
+Nach Seeder (Block Q) — `--reset` durchlaufen lassen:
+```bash
+cd backend && npm run seed -- --reset
+# Erwartung: Sources und Topics ohne Fehler geseedet
+```
+
+In MongoDB Compass / mongosh prüfen:
+```js
+db.sources.countDocuments()            // sollte ~2199 sein
+db.topics.findOne({ _id: "ART0" }, { topResources: 1 })
+// sollte topResources-Array mit bis zu 10 Einträgen zeigen (score > 0)
+```
+
+Nach Route (Block R) — manuelle Smoke-Tests:
+```bash
+# Temp-File-Methode (kein /dev/stdin auf Windows; $TEMP oder $TMPDIR je nach Shell)
+curl -s http://localhost:3042/api/v1/topics/ART0 > "$TEMP/r_art0.json"
+node -e "const d=require(process.env.TEMP+'/r_art0.json'); console.log('resources:', d.topic.resources.length)"
+# → resources: <Zahl 0–10>
+
+# Topic ohne Tag-Überschneidungen → resources: []
+# Topic mit starken Tag-Überschneidungen → resources-Array mit Einträgen, nach overlapScore DESC sortiert
+# Kontrollprüfung: d.topic.resources[0].overlapScore >= d.topic.resources[1].overlapScore → true
+```
+
+Frontend-Verifikation (nach Slice 2c Frontend in frontend/TASK_PLAN.md):
+- [ ] TopicDetail zeigt Resources-Tabelle wenn vorhanden
+- [ ] Leere Resources → Placeholder-Text "No resources yet"
+
+---
+
+## Risks / Rollback
+- Risiko: Overlap-Berechnung zu langsam bei 723 × 2199 Kombinationen → In-Memory-Map-Lookup; sollte < 5s sein. Wenn nötig: Source-Tags pro Topic aggregieren statt umgekehrt.
+- Risiko: Manche Sources haben keine überschneidenden Tags mit einem Topic → overlapScore = 0 → korrekt gefiltert
+- Risiko: Seeder-Reset löscht Sources nicht → `--reset` löscht jetzt auch Source-Collection
+- Rollback: `git revert` auf O+P+Q+R Commits; Seeder mit `--reset` neu laufen lassen

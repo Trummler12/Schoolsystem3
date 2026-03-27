@@ -367,5 +367,141 @@ Manuelle Verifikation:
 ---
 
 # Slice 2c: Resources in TopicDetail ⏳
+<a name="slice-2c"></a>
 
-*(Wird nach Abschluss von Slice 2b ergänzt)*
+## Mode & Score
+Mode: plan-gate (gemeinsam mit Backend Slice 2c), Score: 8 (inherited — cross-file coupling, DB/Schema, diff >50 LOC)
+
+## Task Scope Paths
+- AKSEP/Schoolsystem3/frontend/**
+- AKSEP/Schoolsystem3/frontend/TASK_PLAN.md
+
+Voraussetzung: Backend Slice 2c (Block R) steht — `GET /api/v1/topics/:id` liefert `resources: ResourceDto[]`.
+→ [backend/TASK_PLAN.md — Slice 2c](../backend/TASK_PLAN.md#slice-2c)
+
+---
+
+## Discovery
+
+### API-Response (nach Backend Slice 2c)
+```ts
+TopicDetailDto.resources: ResourceDto[]
+// ResourceDto: { id, title, url, description, typeName, authorName, overlapScore }
+```
+
+### Bestehender Stand
+`TopicDetailView.tsx` L100–101 zeigt einen Placeholder:
+```tsx
+<h3>Resources</h3>
+<p><em>Coming in Slice 2c.</em></p>
+```
+Dieser Block wird durch `<ResourcesTable>` ersetzt (JSX-Inhalt, kein Kommentar).
+
+Status: READY
+
+---
+
+## Planning
+
+### Neue Komponente: ResourcesTable
+
+```
+frontend/src/
+└── components/
+    └── ResourcesTable.tsx    # Tabelle mit Titel-Link, Autor, Typ, Score
+```
+
+Einfache Tabelle (kein eigenes useQuery — Daten kommen aus dem bestehenden TopicDetail-Query):
+
+| Spalte | Quelle | Notiz |
+|--------|--------|-------|
+| Title | `resource.title` | Als anklickbarer Link (`resource.url`) |
+| Type | `resource.typeName` | z.B. "YouTube Video" |
+| Author | `resource.authorName` | YouTube-Channel |
+| Score | `resource.overlapScore` | Optional anzeigen (Debug-Hilfe) |
+
+Leere Resources (`resources.length === 0`) → Placeholder: *"No resources linked to this topic yet."*
+
+Status: READY FOR APPROVAL
+
+---
+
+## Pre-Approval Checklist
+- [x] Discovery: Status = READY
+- [x] Planning: Status = READY FOR APPROVAL
+- [x] Steps atomar (pro File + Anchor)
+- [x] Developer Interactions vorhanden (leer)
+- [x] Checks vorhanden
+- [x] Mode & Score gesetzt
+
+---
+
+## Implementation Steps — Slice 2c Frontend
+
+0) **Plan Sync:** Dieses Dokument laden; Developer Interactions prüfen.
+
+### Block S: ResourcesTable + TopicDetailView-Integration
+
+**S1)** `frontend/src/types/api.ts` — `ResourceDto` Interface ergänzen; `TopicDetailDto.resources` typisieren:
+```ts
+export interface ResourceDto {
+  id: number
+  title: string
+  url: string
+  description: string
+  typeName: string
+  authorName: string
+  overlapScore: number
+}
+// TopicDetailDto.resources: ResourceDto[]  (war: resources: [])
+```
+
+**S2)** `frontend/src/components/ResourcesTable.tsx` — anlegen:
+- Props: `resources: ResourceDto[]`
+- `resources.length === 0` → Placeholder-Text
+- Tabelle: Title als `<a href={url} target="_blank">`, typeName, authorName, overlapScore
+
+**S3)** `frontend/src/views/TopicDetailView.tsx` — L100–101 (Placeholder-JSX) durch `<ResourcesTable>` ersetzen:
+```tsx
+// entfernen:
+<h3>Resources</h3>
+<p><em>Coming in Slice 2c.</em></p>
+// ersetzen durch:
+<ResourcesTable resources={topic.resources} />
+```
+
+→ **Commit nach S1–S3:**
+```
+feat(frontend): add ResourcesTable to TopicDetailView;
+
+- ResourceDto type added
+- ResourcesTable: title link, type, author, overlap score
+- replaces Slice 2c placeholder in TopicDetail
+```
+
+N) **Final @codex Sweep:** touched/new Files + Control Paths prüfen.
+
+---
+
+## Developer Interactions
+*(leer)*
+
+---
+
+## Checks & Pass Criteria
+
+```bash
+cd frontend && npm run build   # keine TypeScript-Fehler
+```
+
+Manuelle Verifikation (Backend muss laufen, Seeder durchgelaufen):
+- [ ] TopicDetail eines Topics mit Resources → Tabelle mit Einträgen sichtbar
+- [ ] Titel ist anklickbarer Link zur YouTube-URL (`target="_blank"`)
+- [ ] TopicDetail ohne Resources → Placeholder-Text "No resources linked..."
+- [ ] Kein TypeScript-Fehler (`npm run build` sauber)
+
+---
+
+## Risks / Rollback
+- Risiko: `resources: []` im DTO-Typ noch nicht korrekt typisiert wenn Backend-Block P noch nicht committed → Frontend kompiliert ggf. mit Warnung. Frontend-Slice erst nach Backend-Blocks O–R implementieren.
+- Rollback: `git revert` auf S-Commits; Backend-Blocks unberührt

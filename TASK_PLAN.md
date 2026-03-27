@@ -57,17 +57,18 @@ LLM-Provider: TBD (nicht OpenAI) — Abstraktionsschicht (`TagMatchingClient`-In
 
 ---
 
-### Slice 2c: Resources + Scoring ⏳
+### Slice 2c: Resources ⏳
 
-Ziel: Resources und Sources in MongoDB; Score-Berechnung pro Topic; ResourceTabelle in TopicDetail.
+Ziel: Sources (YouTube-Videos) in MongoDB; Tag-Overlap-Berechnung pro Topic; ResourceTabelle in TopicDetail.
 
 | Modul | Plan | Status |
 |-------|------|--------|
-| Backend (Resource/Source Models, Seeder, Score-Service) | wird ergänzt | ⏳ |
-| Frontend (Resource-Tabelle in TopicDetail) | wird ergänzt | ⏳ |
+| Backend (Source-Model, Seeder-Erweiterung, Route-Erweiterung) | [backend/TASK_PLAN.md — Slice 2c](./backend/TASK_PLAN.md#slice-2c) | ⏳ |
+| Frontend (ResourcesTable in TopicDetail) | [frontend/TASK_PLAN.md — Slice 2c](./frontend/TASK_PLAN.md#slice-2c) | ⏳ |
 
-Voraussetzung: Slice 2a + 2b abgeschlossen.
-Hinweis: `ct_resource_to_topic.csv` und `t_resource.csv` sind in `data/import/` vorhanden, aber noch leer.
+Voraussetzung: Slice 2a + 2b abgeschlossen. ✅
+Ansatz: `t_source.csv` (2199 Sources) + `ct_resource_tags.csv` → Overlap-Score = Σ(sourceTagWeight × topicTagWeight); Top-10 per Topic gespeichert.
+Hinweis: `ct_resource_to_topic.csv` ist leer — Verbindung wird per Overlap-Berechnung beim Seeding hergeleitet (Überbrückung bis Phase 3-Pipeline).
 
 ---
 
