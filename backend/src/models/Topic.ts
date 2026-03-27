@@ -17,6 +17,14 @@ const TopicTagSchema = new mongoose.Schema(
   { _id: false },
 )
 
+const TopicResourceRefSchema = new mongoose.Schema(
+  {
+    sourceId: { type: Number, required: true },
+    overlapScore: { type: Number, required: true },
+  },
+  { _id: false },
+)
+
 const TopicSchema = new mongoose.Schema({
   _id: { type: String, required: true },   // topicID, e.g. "ART0"
   name: { type: String, required: true },
@@ -28,6 +36,7 @@ const TopicSchema = new mongoose.Schema({
   urls: { type: [String], default: [] },
   levels: { type: [LevelSchema], default: [] },
   tags: { type: [TopicTagSchema], default: [] },
+  topResources: { type: [TopicResourceRefSchema], default: [] },
 })
 
 export const Topic = mongoose.model('Topic', TopicSchema)
