@@ -6,17 +6,41 @@ import dotenv from 'dotenv'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: resolve(__dirname, '../../.env') })
 
-import Fastify from 'fastify'
+import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import mongoose from 'mongoose'
+import { TopicNotFoundError, BadRequestError } from './errors.js'
+import type { ErrorResponse } from './types/api.js'
+import { tagRoutes } from './routes/tags.js'
+import { topicRoutes } from './routes/topics.js'
 
 const server = Fastify({ logger: true })
 
 await server.register(cors)
 
+server.setErrorHandler((error: FastifyError, request, reply) => {
+  const status =
+    error instanceof TopicNotFoundError || error instanceof BadRequestError
+      ? error.statusCode
+      : (error.statusCode ?? 500)
+
+  const body: ErrorResponse = {
+    error: error.name ?? 'InternalServerError',
+    message: error.message,
+    status,
+    path: request.url,
+    timestamp: new Date().toISOString(),
+  }
+
+  reply.status(status).send(body)
+})
+
 server.get('/health', async () => {
   return { status: 'ok' }
 })
+
+await server.register(tagRoutes)
+await server.register(topicRoutes)
 
 const start = async () => {
   try {
