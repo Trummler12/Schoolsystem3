@@ -1,12 +1,18 @@
 import type { FastifyInstance } from 'fastify'
 import { Topic } from '../models/index.js'
-import { TopicNotFoundError, BadRequestError } from '../errors.js'
+import { TopicNotFoundError, BadRequestError, LLMUnavailableError } from '../errors.js'
+import { InterestSearchService } from '../services/InterestSearchService.js'
+import { StubTagMatchingClient } from '../services/StubTagMatchingClient.js'
 import type {
   TopicListResponse,
   TopicResolutionResponse,
   TopicSummaryDto,
   TopicDetailDto,
+  InterestSearchRequestDto,
+  InterestSearchResponseDto,
 } from '../types/api.js'
+
+const interestSearchService = new InterestSearchService(new StubTagMatchingClient())
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -134,6 +140,28 @@ export async function topicRoutes(app: FastifyInstance): Promise<void> {
       }
 
       throw new TopicNotFoundError(topicId)
+    },
+  )
+
+  // POST /api/v1/topics/interest-search
+  app.post<{ Body: InterestSearchRequestDto }>(
+    '/api/v1/topics/interest-search',
+    async (request): Promise<InterestSearchResponseDto> => {
+      const { interestsText } = request.body ?? {}
+
+      if (typeof interestsText !== 'string' || interestsText.length < 12) {
+        throw new BadRequestError('interestsText must be at least 12 characters')
+      }
+      if (interestsText.length > 2048) {
+        throw new BadRequestError('interestsText must not exceed 2048 characters')
+      }
+
+      try {
+        return await interestSearchService.search(request.body)
+      } catch (err) {
+        if (err instanceof BadRequestError || err instanceof LLMUnavailableError) throw err
+        throw new LLMUnavailableError(err instanceof Error ? err.message : undefined)
+      }
     },
   )
 }
