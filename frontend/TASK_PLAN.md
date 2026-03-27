@@ -247,7 +247,7 @@ Manuelle Verifikation:
 ---
 
 ## Risks / Rollback
-- Risiko: CORS trotz Proxy — Fallback: `VITE_API_URL=http://localhost:3000` in root `.env` setzen
+- Risiko: CORS trotz Proxy — Fallback: `VITE_API_URL=http://localhost:3042` in root `.env` setzen
 - Risiko: Typen zwischen Backend und Frontend divergieren → manuelle Sync nötig bis wir einen Typ-Generator einsetzen
 - Rollback: `git revert` auf Frontend-Commits; Backend unberührt
 
@@ -256,10 +256,113 @@ Manuelle Verifikation:
 # Slice 2b: InterestSearch-View ⏳
 <a name="slice-2b"></a>
 
-*(Wird nach Abschluss von Slice 2a ergänzt)*
-
-Voraussetzung: Backend `POST /api/v1/topics/interest-search` steht.
+Voraussetzung: Backend `POST /api/v1/topics/interest-search` steht (Block L).
 → [backend/TASK_PLAN.md — Slice 2b](../backend/TASK_PLAN.md#slice-2b)
+
+---
+
+## Discovery
+
+### API-Endpunkt
+```
+POST /api/v1/topics/interest-search
+Body: { interestsText, language?, maxResults?, explainMatches? }
+→ { interestsText, usedLanguage, matchedTags[], topics[] }
+```
+
+### Frontend-Route
+```
+/interesting   → InterestSearchView
+```
+
+### Komponenten
+```
+frontend/src/
+├── views/
+│   └── InterestSearchView.tsx   # Formular + Ergebnisse
+└── components/
+    ├── InterestForm.tsx          # Textarea, Submit, Validierung
+    └── InterestResults.tsx       # Tag-Badges (matched), TopicCard-Liste mit Score
+```
+
+Status: READY
+
+---
+
+## Planning
+
+### InterestSearchView
+- State: `interestsText` (controlled input)
+- `useMutation` (react-query v5) für POST (kein `useQuery` — kein automatisches Refetch)
+- Cooldown: 60s nach erfolgreichem Submit (localStorage-persistiert, wie in S2)
+- Loading-Spinner während Anfrage läuft
+
+### InterestForm
+- Textarea mit min=12 / max=2048 Zeichen (client-seitige Validierung vor Submit)
+- Submit-Button disabled während Cooldown läuft; Countdown anzeigen
+
+### InterestResults
+- Banner oben: *"Interest matching is not yet available — LLM provider pending."* (immer sichtbar solange Stub aktiv, d.h. `matchedTags` leer nach Submit)
+- `matchedTags[]` → Badge-Reihe mit `interestWeight` (erscheint wenn LLM aktiv)
+- `topics[]` → TopicCard-Liste (sortiert nach Score, Score-Anzeige pro Karte)
+- Leere `topics[]` bei nicht-leerem `matchedTags[]` → "No matching topics found — try different interests"
+
+Status: READY FOR APPROVAL
+
+---
+
+## Implementation Steps — Slice 2b
+
+### Block N: InterestSearch-View + Komponenten
+
+**N1)** `frontend/src/types/api.ts` — neue Interfaces ergänzen:
+```ts
+InterestMatchedTagDto, InterestTopicMatchedTagDto,
+InterestTopicResultDto, InterestSearchRequestDto, InterestSearchResponseDto
+```
+(`InterestTopicMatchedTagDto` für `explainMatches`-Support — auch wenn Stub es noch nicht liefert)
+
+**N2)** `frontend/src/services/apiClient.ts` — `post<T>` Funktion ergänzen:
+```ts
+export async function post<T>(path: string, body: unknown): Promise<T>
+```
+
+**N3)** `frontend/src/components/InterestForm.tsx` — anlegen
+
+**N4)** `frontend/src/components/InterestResults.tsx` — anlegen
+
+**N5)** `frontend/src/views/InterestSearchView.tsx` — anlegen:
+- `useMutation({ mutationFn: () => post('/api/v1/topics/interest-search', ...) })`
+- Cooldown-Logik (localStorage)
+
+**N6)** `frontend/src/router/index.tsx` — `/interesting` Route ergänzen
+
+**N7)** `frontend/src/components/Layout.tsx` — Nav-Link zu `/interesting` ergänzen
+
+→ **Commit nach N1–N7:**
+```
+feat(frontend): add InterestSearchView with form and results;
+
+- POST /api/v1/topics/interest-search via useMutation
+- 60s cooldown (localStorage-persisted)
+- matched tags display + scored topic cards
+- /interesting route + nav link
+```
+
+---
+
+## Checks & Pass Criteria
+
+```bash
+cd frontend && npm run build   # keine TypeScript-Fehler
+```
+
+Manuelle Verifikation:
+- [ ] `/interesting` lädt, Formular sichtbar
+- [ ] Zu kurzer Text → Submit-Button disabled oder Fehlermeldung
+- [ ] Submit mit gültigem Text → Spinner → leere Ergebnisliste (Stub-Backend)
+- [ ] Cooldown läuft 60s ab, Button zeigt Countdown
+- [ ] Nav-Link zu Topics und Interesting sichtbar
 
 ---
 

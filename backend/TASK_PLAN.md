@@ -292,13 +292,334 @@ curl "http://localhost:3000/api/v1/topics/DOESNOTEXIST" | jq '.status'
 ---
 
 # Slice 2b: Interest-Search ⏳
+<a name="slice-2b"></a>
 
-*(Wird nach Abschluss von Slice 2a in diesem File ergänzt)*
+## Mode & Score
+Mode: plan-gate, Score: 6 (>2 files +2, cross-file coupling +2, no tests +1, diff >50 LOC +1)
+Note: kein +3 für new dependency — Stub braucht keine neue npm-Abhängigkeit; produktiver LLM-Client kommt in separatem Slice
 
-Geplante Schritte:
-- `InterestSearchService`: Keyword-Matching von `interestsText` gegen Tag-Labels + Synonyms → `interestWeight` 1–5
-- Route: `POST /api/v1/topics/interest-search`
-- → dann weiter: [frontend/TASK_PLAN.md — Slice 2b](../frontend/TASK_PLAN.md#slice-2b)
+## Task Scope Paths
+- AKSEP/Schoolsystem3/backend/**
+- AKSEP/Schoolsystem3/backend/TASK_PLAN.md
+
+---
+
+## Discovery
+
+### Pre-2b Fix: GET /api/v1/topics — fehlende Filter
+Beim Vergleich mit Schoolsystem2 aufgefallen: Der Plan sah `maxLayer`, `showCourses`, `showAchievements`, `sortBy`, `sortDirection` vor, implementiert ist jedoch nur `?tag=`. Das Frontend sendet die Parameter bereits — sie werden still ignoriert.
+
+Betroffene typeIds (aus `t_topic_type.csv`):
+- `showCourses: false` → `{ typeId: { $nin: [4, 5] } }` (typeId 4=General Course, 5=Optional Course)
+- `showAchievements: false` → `{ typeId: { $nin: [3] } }` (typeId 3=Achievement)
+
+### Interest-Search Algorithmus (aus Schoolsystem2 übernommen)
+
+**Scoring-Formel:**
+```
+score(topic) = Σ interestWeight[i] × topicWeight[i]
+               für alle Tags i, die sowohl im Topic als auch in matchedTags vorkommen
+```
+- `topicWeight`: 1–5, bereits in `Topic.tags[].weight` gespeichert
+- `interestWeight`: 1–5, vom LLM basierend auf Relevanz-Position vergeben
+
+**Weight-Matrix (Positions-basiert, aus S2 portiert):**
+```
+layerEquivalent = 3 + max(0, floor(log₂(textLength / 50)))
+
+Matrix (layerEq → Gewichte nach Rang-Position):
+  3 → [5, 4, 3, 1]
+  4 → [5, 4, 3, 2, 1]
+  5 → [5, 4, 3, 3, 1]
+  6 → [5, 4, 3, 2, 2, 1]
+  7 → [5, 4, 3, 3, 2, 1]
+  8 → [5, 4, 3, 3, 2, 1, 1]
+  (≥9 → letzten Eintrag wiederholen)
+```
+Beispiel: Text mit 120 Zeichen → layerEq=4 → Top-Tag bekommt weight=5, zweiter=4, dritter=3, vierter=2, fünfter=1.
+
+### LLM-Integration
+
+**Provider:** Nicht OpenAI (wie in S2). Konkreter Provider wird evaluiert wenn der Schritt ansteht.
+**Abstraktions-Schicht erforderlich:** `TagMatchingClient`-Interface (Port), damit Provider austauschbar bleibt.
+
+**LLM-Prompt-Struktur (aus S2 adaptiert):**
+```
+You are selecting tags that best match the given interests.
+- Choose between {minTags} and {maxTags} tag IDs.
+- Order tags by relevance (most relevant first).
+- Only return tag IDs from the catalog; never invent new IDs.
+- Respond with a plain JSON array of integers, e.g. [12, 4, 7].
+
+USER INTERESTS:
+{interestsText}
+
+TAG CATALOG:
+- 1: art
+- 76: artificial intelligence (synonyms: AI, A.I.)
+- ...
+```
+Synonyme sind nur als LLM-Kontext im Prompt — kein eigenes String-Matching.
+
+**Scope-Entscheidung:** Die produktive LLM-Implementierung wird bewusst auf später verschoben (Provider noch nicht gewählt). Der `StubTagMatchingClient` gibt immer eine leere Tag-Liste zurück → Score 0 für alle Topics → leere Ergebnisliste. Das Interface bleibt als Erweiterungspunkt. Frontend zeigt einen Hinweis: *"Interest matching is not yet available — LLM provider pending."*
+
+### Result-Limits
+
+- Filter: `score > 0`
+- Cap: `min(max(5, floor(totalTopics × 0.1)), requestedMaxResults)`
+  Bei 723 Topics → 10% = 72 → Standardlimit ~72; mindestens 5 wenn möglich
+- `maxResults` per Request konfigurierbar (Default: `floor(totalTopics × 0.1)`, min 5)
+
+`maxResults` kommt in den POST-Body (konsistent mit allen anderen Parametern; Query-Params bei POST unkonventionell).
+
+### API-Vertrag
+
+```
+POST /api/v1/topics/interest-search
+Body: {
+  interestsText: string        // Freitext, 12–2048 Zeichen
+  language?: string            // default: "en"
+  maxResults?: number          // default: floor(totalTopics × 0.1), min 5
+  explainMatches?: boolean     // default: false (Scoring-Breakdown pro Tag)
+}
+
+Response 200: {
+  interestsText: string
+  usedLanguage: string
+  matchedTags: InterestMatchedTagDto[]   // LLM-Output mit interestWeight
+  topics: InterestTopicResultDto[]       // score-sortiert, score > 0
+}
+
+Response 400: interestsText zu kurz/lang
+Response 502: LLM nicht erreichbar
+```
+
+### DTOs (neu in types/api.ts)
+
+```ts
+InterestMatchedTagDto    { tagId, label, interestWeight }
+InterestTopicMatchedTagDto { tagId, label, interestWeight, topicWeight, contribution }
+InterestTopicResultDto   { id, name, typeName, layer, score, matchedTags? }
+InterestSearchRequestDto { interestsText, language?, maxResults?, explainMatches? }
+InterestSearchResponseDto { interestsText, usedLanguage, matchedTags, topics }
+```
+
+Status: READY
+
+---
+
+## Planning
+
+### Komponentenstruktur Backend
+
+```
+backend/src/
+├── routes/
+│   └── topics.ts              # POST route ergänzen
+├── services/
+│   ├── TagMatchingClient.ts   # Interface (Port)
+│   ├── StubTagMatchingClient.ts  # Fallback/Stub-Implementierung
+│   └── InterestSearchService.ts  # Scoring-Logik
+└── types/
+    └── api.ts                 # neue DTOs ergänzen
+```
+
+### Entscheidungen
+
+**D1 — TagMatchingClient als Interface:**
+Provider (Anthropic/OpenAI/lokal) ist noch nicht gewählt → Interface zuerst, Stub-Implementierung für Entwicklung. Produktive Implementierung kommt in separatem Commit wenn Provider feststeht.
+
+**D2 — Service-Schicht einführen:**
+Die Scoring-Logik ist zu komplex für direkte Route-Handler → `InterestSearchService.ts` als dedizierter Service.
+
+**D3 — POST statt GET:**
+`interestsText` kann lang sein (bis 2048 Zeichen) → POST mit JSON-Body.
+
+**D4 — maxResults-Berechnung:**
+`floor(totalTopics × 0.1)` wird zur Laufzeit berechnet (nicht hardcoded), da sich die Topic-Anzahl ändern kann.
+
+Status: READY FOR APPROVAL
+
+---
+
+## Pre-Approval Checklist
+- [x] Discovery: READY
+- [x] Planning: READY FOR APPROVAL
+- [x] Steps atomar
+- [x] Developer Interactions vorhanden
+- [x] Checks vorhanden
+- [x] Mode & Score gesetzt
+- [ ] git status clean (nur TASK_PLAN.md/TASK_DOCS.md geändert)
+
+---
+
+## Implementation Steps — Slice 2b
+
+0) **Plan Sync:** Dieses Dokument laden; Developer Interactions prüfen.
+
+### Pre-Fix: GET /api/v1/topics Filter vervollständigen
+
+**P1)** `backend/src/routes/topics.ts` — Filter implementieren:
+- `maxLayer` (number, default 3) → `{ layer: { $lte: maxLayer } }`
+- `showCourses` (bool, default true) → wenn false: `{ typeId: { $nin: [4, 5] } }`
+- `showAchievements` (bool, default true) → wenn false: `{ typeId: { $nin: [3] } }`
+- `sortBy` (`name`|`layer`, default `name`) + `sortDirection` (`asc`|`desc`, default `asc`) → `.sort()`
+
+→ **Commit nach P1:**
+```
+fix(backend/routes): implement missing topic list filters;
+
+- maxLayer, showCourses, showAchievements, sortBy, sortDirection
+- frontend was already sending these params, backend was ignoring them
+```
+
+---
+
+### Block I: DTOs erweitern
+
+**I1)** `backend/src/types/api.ts` — neue Interfaces ergänzen:
+```ts
+InterestMatchedTagDto, InterestTopicMatchedTagDto,
+InterestTopicResultDto, InterestSearchRequestDto, InterestSearchResponseDto
+```
+
+**I2)** `backend/src/errors.ts` — `LLMUnavailableError` ergänzen:
+```ts
+export class LLMUnavailableError extends Error {
+  readonly statusCode = 502
+  constructor(cause?: string) { ... }
+}
+```
+Ebenfalls in `index.ts` setErrorHandler registrieren (analog zu TopicNotFoundError).
+
+→ **Commit nach I1–I2:**
+```
+feat(backend/types): add InterestSearch DTOs and LLMUnavailableError (502)
+```
+
+---
+
+### Block J: TagMatchingClient Interface + Stub
+
+**J1)** `backend/src/services/TagMatchingClient.ts` — Interface anlegen:
+```ts
+export interface TagMatchingClient {
+  findMatchingTagIds(interestsText: string, tags: TagDto[], language: string): Promise<number[]>
+}
+```
+
+**J2)** `backend/src/services/StubTagMatchingClient.ts` — Stub-Implementierung:
+- Gibt leeres Array zurück (kein LLM-Call)
+- Logged eine Warnung: `"StubTagMatchingClient: no LLM provider configured"`
+
+→ **Commit nach J1–J2:**
+```
+feat(backend/services): add TagMatchingClient interface and stub implementation;
+
+- interface allows swapping LLM providers without touching service logic
+- stub returns empty matches (used until real provider is wired)
+```
+
+---
+
+### Block K: InterestSearchService
+
+**K1)** `backend/src/services/InterestSearchService.ts` — anlegen:
+```ts
+// ACHTUNG: erasableSyntaxOnly aktiv → kein parameter property syntax!
+// Korrekt:
+export class InterestSearchService {
+  private readonly tagMatchingClient: TagMatchingClient
+  constructor(tagMatchingClient: TagMatchingClient) {
+    this.tagMatchingClient = tagMatchingClient
+  }
+  async search(request: InterestSearchRequestDto): Promise<InterestSearchResponseDto> { ... }
+}
+```
+
+Logik:
+1. Alle Tags laden
+2. `tagMatchingClient.findMatchingTagIds()` aufrufen
+3. Weight-Matrix anwenden (layerEquivalent-Formel aus S2)
+4. Alle Topics laden
+5. Score pro Topic berechnen: `Σ(interestWeight × topicWeight)`
+6. Score > 0 filtern
+7. Nach Score DESC sortieren
+8. Auf `min(max(5, floor(total × 0.1)), maxResults)` limitieren
+9. Response zusammenbauen (inkl. `matchedTags` breakdown wenn `explainMatches: true`)
+
+→ **Commit nach K1:**
+```
+feat(backend/services): implement InterestSearchService with S2 scoring algorithm;
+
+- score = Σ(interestWeight × topicWeight) per matched tag
+- position-based weight matrix (layerEquivalent from text length)
+- result cap: min(max(5, 10% of topics), maxResults)
+```
+
+---
+
+### Block L: Route
+
+**L1)** `backend/src/routes/topics.ts` — POST route ergänzen:
+```ts
+POST /api/v1/topics/interest-search
+```
+- Input-Validierung: `interestsText` 12–2048 Zeichen → `BadRequestError`
+- `InterestSearchService` aufrufen
+- LLM-Fehler → 502 mit strukturierter Fehlermeldung
+
+→ **Commit nach L1:**
+```
+feat(backend/routes): add POST /api/v1/topics/interest-search;
+
+- validates interestsText length (12-2048 chars)
+- wires InterestSearchService + StubTagMatchingClient
+- returns 502 on LLM provider failure
+```
+
+---
+
+N) **Final @codex Sweep:** alle touched/new Files + Control Paths prüfen.
+
+---
+
+## Developer Interactions
+*(leer)*
+
+---
+
+## Checks & Pass Criteria
+
+```bash
+cd backend && npx tsc --noEmit   # keine TypeScript-Fehler
+```
+
+Manuelle Smoke-Tests (Temp-File-Methode, kein /dev/stdin auf Windows):
+```bash
+# Stub liefert leere matchedTags → leere topics-Liste (korrekt)
+curl -s -X POST http://localhost:3042/api/v1/topics/interest-search \
+  -H "Content-Type: application/json" \
+  -d '{"interestsText": "I love artificial intelligence and music"}' \
+  > /tmp/r_interest.json && node -e "const d=require('/tmp/r_interest.json'); console.log('topics:', d.topics.length, 'matchedTags:', d.matchedTags.length)"
+
+# Validierung: zu kurz → 400
+curl -s -X POST http://localhost:3042/api/v1/topics/interest-search \
+  -H "Content-Type: application/json" \
+  -d '{"interestsText": "short"}' > /tmp/r_400.json && node -e "const d=require('/tmp/r_400.json'); console.log(d.status, d.error)"
+```
+
+Frontend (nach Slice 2b Frontend-Block):
+- [ ] `/interesting` lädt und zeigt Formular
+- [ ] Absenden → Lade-Spinner → leere Ergebnisliste (Stub)
+- [ ] Zu kurzer Text → Fehlermeldung (client-seitig oder 400)
+
+---
+
+## Risks / Rollback
+- Risiko: LLM-Provider noch nicht gewählt → bewusst als Stub implementiert; produktive Implementierung in separatem zukünftigem Slice
+- Risiko: Topic-Anzahl ändert sich → maxResults dynamisch berechnet, kein Problem
+- Rollback: `git revert` auf Slice 2b Commits; Slice 2a unberührt
 
 ---
 

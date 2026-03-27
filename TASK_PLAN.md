@@ -32,32 +32,28 @@ Architektur-Entscheide: → [Phase-1-Archiv weiter unten](#phase-1-entscheide-ar
 
 Umsetzung in **Vertical Slices** — jeder Slice liefert ein vollständig durchgestochenes Feature (DB → API → UI).
 
-### Slice 2a: Topics + Tags 🔄
+### Slice 2a: Topics + Tags ✅
 
 Ziel: Topics und Tags in MongoDB, REST-API, TopicsList und TopicDetail im Frontend.
 
 | Modul | Plan | Status |
 |-------|------|--------|
-| Backend (Models, Seeder, Routes) | [backend/TASK_PLAN.md](./backend/TASK_PLAN.md) | 🔄 Planung ✅ — **nächster Schritt: Block A1** (`backend/src/models/Tag.ts`) |
-| Frontend (Router, Views) | [frontend/TASK_PLAN.md](./frontend/TASK_PLAN.md) | ⏳ wartet auf Backend Slice 2a |
-
-Cross-Slice-Abhängigkeit:
-- Frontend Slice 2a kann erst beginnen, wenn Backend-Routes stehen
-- → Übergang: [backend/TASK_PLAN.md — Schritt: Routes fertig](./backend/TASK_PLAN.md#slice-2a-routes)
-  → dann weiter: [frontend/TASK_PLAN.md — Slice 2a Views](./frontend/TASK_PLAN.md#slice-2a-views)
+| Backend (Models, Seeder, Routes) | [backend/TASK_PLAN.md](./backend/TASK_PLAN.md) | ✅ |
+| Frontend (Router, Views) | [frontend/TASK_PLAN.md](./frontend/TASK_PLAN.md) | ✅ |
 
 ---
 
 ### Slice 2b: Interest-Search ⏳
 
-Ziel: Keyword-basiertes Matching von Nutzer-Interessen gegen Tags → scored Topics.
+Ziel: LLM-basiertes Matching von Nutzer-Interessen gegen Tags → scored Topics.
 
 | Modul | Plan | Status |
 |-------|------|--------|
-| Backend (InterestSearch-Service, POST /interest-search) | wird in `backend/TASK_PLAN.md` ergänzt | ⏳ |
-| Frontend (InterestSearch-View) | wird in `frontend/TASK_PLAN.md` ergänzt | ⏳ |
+| Backend (Pre-Fix Filter, InterestSearchService, POST /interest-search) | [backend/TASK_PLAN.md — Slice 2b](./backend/TASK_PLAN.md#slice-2b) | ⏳ **Planung ✅ — nächster Schritt: P1 (Filter-Fix)** |
+| Frontend (InterestSearchView) | [frontend/TASK_PLAN.md — Slice 2b](./frontend/TASK_PLAN.md#slice-2b) | ⏳ wartet auf Backend Block L |
 
-Voraussetzung: Slice 2a abgeschlossen (Tags + Topics in DB).
+Voraussetzung: Slice 2a ✅
+LLM-Provider: TBD (nicht OpenAI) — Abstraktionsschicht (`TagMatchingClient`-Interface) ermöglicht späteren Austausch ohne Service-Änderung.
 
 ---
 
