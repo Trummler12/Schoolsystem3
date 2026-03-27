@@ -35,6 +35,16 @@ export interface TopicSummaryDto {
   tags: TopicTagDto[]
 }
 
+export interface ResourceDto {
+  id: number
+  title: string
+  url: string
+  description: string
+  typeName: string
+  authorName: string
+  overlapScore: number
+}
+
 /** Full shape used in detail view */
 export interface TopicDetailDto {
   id: string
@@ -47,7 +57,7 @@ export interface TopicDetailDto {
   urls: string[]
   tags: TopicTagDto[]
   levels: TopicLevelDto[]
-  resources: []   // placeholder — populated in Slice 2c
+  resources: ResourceDto[]
 }
 
 export interface TopicListResponse {
