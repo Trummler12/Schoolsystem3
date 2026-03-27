@@ -48,7 +48,7 @@ const start = async () => {
     await mongoose.connect(mongoUri)
     server.log.info('MongoDB verbunden')
 
-    const port = Number(process.env.PORT ?? 3000)
+    const port = Number(process.env.PORT ?? 3042)
     await server.listen({ port, host: '0.0.0.0' })
   } catch (err) {
     server.log.error(err)

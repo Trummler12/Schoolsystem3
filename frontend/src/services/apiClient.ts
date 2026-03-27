@@ -1,4 +1,4 @@
-// Empty string = requests go through the Vite proxy to http://localhost:3000
+// Empty string = requests go through the Vite proxy to http://localhost:3042
 // Set VITE_API_URL in .env to bypass the proxy (e.g. for staging/prod)
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
