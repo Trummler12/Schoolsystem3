@@ -9,7 +9,7 @@ dotenv.config({ path: resolve(__dirname, '../../.env') })
 import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import mongoose from 'mongoose'
-import { TopicNotFoundError, BadRequestError } from './errors.js'
+import { TopicNotFoundError, BadRequestError, LLMUnavailableError } from './errors.js'
 import type { ErrorResponse } from './types/api.js'
 import { tagRoutes } from './routes/tags.js'
 import { topicRoutes } from './routes/topics.js'
@@ -20,7 +20,9 @@ await server.register(cors)
 
 server.setErrorHandler((error: FastifyError, request, reply) => {
   const status =
-    error instanceof TopicNotFoundError || error instanceof BadRequestError
+    error instanceof TopicNotFoundError ||
+    error instanceof BadRequestError ||
+    error instanceof LLMUnavailableError
       ? error.statusCode
       : (error.statusCode ?? 500)
 

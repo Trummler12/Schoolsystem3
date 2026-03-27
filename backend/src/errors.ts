@@ -13,3 +13,11 @@ export class BadRequestError extends Error {
     this.name = 'BadRequestError'
   }
 }
+
+export class LLMUnavailableError extends Error {
+  readonly statusCode = 502
+  constructor(cause?: string) {
+    super(cause ? `LLM provider unavailable: ${cause}` : 'LLM provider unavailable')
+    this.name = 'LLMUnavailableError'
+  }
+}

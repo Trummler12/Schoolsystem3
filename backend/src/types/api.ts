@@ -59,6 +59,48 @@ export type TopicResolutionResponse =
   | { resolutionStatus: 'EXACT'; topic: TopicDetailDto }
   | { resolutionStatus: 'AMBIGUOUS'; candidates: TopicSummaryDto[] }
 
+// ── Interest Search ───────────────────────────────────────────────────────────
+
+/** A tag selected by the LLM, with its assigned interest weight */
+export interface InterestMatchedTagDto {
+  tagId: number
+  label: string
+  interestWeight: number
+}
+
+/** Per-tag score breakdown (only present when explainMatches=true) */
+export interface InterestTopicMatchedTagDto {
+  tagId: number
+  label: string
+  interestWeight: number
+  topicWeight: number
+  contribution: number
+}
+
+/** A scored topic in the interest-search results */
+export interface InterestTopicResultDto {
+  id: string
+  name: string
+  typeName: string
+  layer: number
+  score: number
+  matchedTags?: InterestTopicMatchedTagDto[]
+}
+
+export interface InterestSearchRequestDto {
+  interestsText: string
+  language?: string
+  maxResults?: number
+  explainMatches?: boolean
+}
+
+export interface InterestSearchResponseDto {
+  interestsText: string
+  usedLanguage: string
+  matchedTags: InterestMatchedTagDto[]
+  topics: InterestTopicResultDto[]
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export interface ErrorResponse {
