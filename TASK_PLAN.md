@@ -43,14 +43,14 @@ Ziel: Topics und Tags in MongoDB, REST-API, TopicsList und TopicDetail im Fronte
 
 ---
 
-### Slice 2b: Interest-Search ⏳
+### Slice 2b: Interest-Search ✅ (Stub — LLM provider TBD)
 
 Ziel: LLM-basiertes Matching von Nutzer-Interessen gegen Tags → scored Topics.
 
 | Modul | Plan | Status |
 |-------|------|--------|
-| Backend (Pre-Fix Filter, InterestSearchService, POST /interest-search) | [backend/TASK_PLAN.md — Slice 2b](./backend/TASK_PLAN.md#slice-2b) | ⏳ **Planung ✅ — nächster Schritt: P1 (Filter-Fix)** |
-| Frontend (InterestSearchView) | [frontend/TASK_PLAN.md — Slice 2b](./frontend/TASK_PLAN.md#slice-2b) | ⏳ wartet auf Backend Block L |
+| Backend (Pre-Fix Filter, InterestSearchService, POST /interest-search) | [backend/TASK_PLAN.md — Slice 2b](./backend/TASK_PLAN.md#slice-2b) | ✅ |
+| Frontend (InterestSearchView) | [frontend/TASK_PLAN.md — Slice 2b](./frontend/TASK_PLAN.md#slice-2b) | ✅ |
 
 Voraussetzung: Slice 2a ✅
 LLM-Provider: TBD (nicht OpenAI) — Abstraktionsschicht (`TagMatchingClient`-Interface) ermöglicht späteren Austausch ohne Service-Änderung.
