@@ -674,19 +674,21 @@ Gleiche Formel wie der Interest-Search-Scoring-Algorithmus — konzeptuell konsi
 
 Mit 723 Topics × ~10992 Tag-Mappings ist das ein handlicher einmaliger Seeding-Schritt.
 
-### Architekturentscheid: Wo werden Resources gespeichert?
+### Architekturentscheid: Wo werden Resource-Topic-Verbindungen gespeichert?
 
-**Option A — Nur IDs in Topic einbetten, Source-Details bei Bedarf nachladen (gewählt):**
-- Topic bekommt `topResources: [{sourceId, overlapScore}]` (max 10)
-- `GET /api/v1/topics/:id` lädt Topic → dann `Source.find({ _id: { $in: [...] } })` → mergt
-- Vorteil: Topic-Dokumente bleiben schlank; Source-Daten nicht dupliziert
-- Nachteil: 2 DB-Queries pro Detail-Request (aber beide sind kleinfisching + indexed)
+**Konzept (aus S2):** Resources werden Topics zugewiesen — nie umgekehrt. Topics sind unbegrenzt, Resources sind begrenzt in der Anzahl zugewiesener Topics.
 
-**Option B — Full ResourceDto in Topic einbetten:** Topic-Dokumente würden unnötig aufgebläht.
+**Gewählter Ansatz — topTopics in Resource:**
+- Resource bekommt `topTopics: [{topicId, overlapScore}]` (max 5 Topics pro Resource)
+- Topics speichern **keine** Resource-Refs — sie sind unbegrenzt
+- `GET /api/v1/topics/:id` → `Resource.find({ 'topTopics.topicId': topicId })` → alle Resources die auf dieses Topic zeigen
+- Vorteil: Topics bleiben schlank und unbegrenzt; Begrenzung nur auf Resource-Seite (semantisch korrekt)
+- Nachteil: Query über `topTopics.topicId` statt indexed Array-Lookup — bei 2199 Resources akzeptabel
 
-**Option C — Separate ResourceTopic-Collection:** Überengineering für die aktuelle Datenmenge.
-
-→ **Option A** gewählt.
+**Modell-Benennung:**
+`Source.ts` → `Resource.ts` (Mongoose-Modell: `Resource`, Collection: `resources`).
+Das PoC behandelt `t_source.csv`-Zeilen mit `sa_resource=1` direkt als Resources (resourceID = sourceID).
+Langfristig: separates Resource-Modell mit `ct_uses_source`-Verknüpfungen.
 
 ### Resource DTO
 
@@ -724,11 +726,11 @@ backend/scripts/
 └── seed.ts                 # Source-Seeding + Overlap-Berechnung + Topic.topResources befüllen
 ```
 
-### Source-Mongoose-Schema
+### Resource-Mongoose-Schema
 
 ```ts
-SourceSchema: {
-  _id: Number,          // sourceID
+ResourceSchema: {
+  _id: Number,          // resourceID (= sourceID für standalone resources)
   typeId: Number,       // source_typeID
   typeName: String,     // denormalisiert aus t_source_type
   url: String,          // source_URL
@@ -738,34 +740,26 @@ SourceSchema: {
   description: String,
   createdAt: Date,
   updatedAt: Date,
+  topTopics: [{ topicId: String, overlapScore: Number }]  // top-5 Topics, _id: false
 }
 ```
 
-`ct_resource_tags`-Daten werden NICHT im Source-Dokument gespeichert — sie werden nur während des Seedings für die Overlap-Berechnung verwendet und danach verworfen.
+`ct_resource_tags`-Daten werden NICHT im Resource-Dokument gespeichert — nur während des Seedings für die Overlap-Berechnung verwendet und danach verworfen.
 
-### Topic-Schema-Erweiterung
-
-```ts
-// Neues Subdokument (ohne _id):
-TopicResourceRefSchema: { sourceId: Number, overlapScore: Number }
-
-// Im TopicSchema ergänzen:
-topResources: { type: [TopicResourceRefSchema], default: [] }
-```
+**Topic-Schema: keine Änderung.** Topics speichern keine Resource-Refs.
 
 ### Seeder-Erweiterung (seed.ts)
 
 Neue Funktionen:
-1. `loadSourceAuthors()` → `Map<number, string>` (authorId → authorName; fehlende ID → `""`)
-2. `loadSourceTypes()` → `Map<number, string>` (typeId → typeName)
-3. `seedSources(sourceRows, authorMap, typeMap)` → inserted Sources
+1. `buildAuthorMap(rows)` → `Map<number, string>` (authorId → authorName; fehlende ID → `""`)
+2. `buildSourceTypeMap(rows)` → `Map<number, string>` (typeId → typeName)
+3. `seedResources(sourceRows, authorMap, typeMap)` → nur Zeilen mit `sa_resource=1`
    - CSV-Spalten: `created` → `createdAt`, `updated` → `updatedAt` (Umbenennung beim Mapping)
    - Unbekannter `sauthorID`: `authorMap.get(id) ?? ''`
-4. `computeTopicResources(topicDocs, resourceTagRows)` → Map<topicId, [{sourceId, overlapScore}]>
-   - `topicDocs` bringen `.tags: [{tagId, weight}]` mit (bereits geseedet)
-   - `resourceTagRows` → invertierter Index: `Map<tagId, [{sourceId, weight}]>`
-   - Pro Topic: Tags iterieren → Scores über den Index akkumulieren → Top-10 nach Score DESC (score > 0)
-5. In `main()`: Sources nach Topics seeden; `computeTopicResources()` aufrufen; Topics mit `topResources` updaten (bulkWrite)
+4. `computeSourceTopics(topicTagMap, resourceTagRows)` → `Map<resourceId, [{topicId, overlapScore}]>`
+   - Pro Resource: Tags iterieren → Scores akkumulieren → Top-5 Topics nach Score DESC (score > 0)
+   - **Richtung: Resource → Topics** (nicht Topic → Resources)
+5. In `main()`: Resources seeden; `computeSourceTopics()` aufrufen; **Resources** mit `topTopics` updaten (bulkWrite)
 
 Reihenfolge in `main()`:
 ```
@@ -781,10 +775,10 @@ Reset-Modus (`--reset`): `Source.deleteMany()` ergänzen.
 
 `GET /api/v1/topics/:topicId` (EXACT-Pfad) — nach Topic-Lookup:
 ```ts
-const refs = topic.topResources   // [{sourceId, overlapScore}] — bereits nach Score sortiert
-const sources = await Source.find({ _id: { $in: refs.map(r => r.sourceId) } })
-// Source.find({ $in: [...] }) garantiert KEINE Reihenfolge → nach Merge explizit sortieren:
-// scoreMap aufbauen (sourceId → overlapScore aus refs), dann sources.sort() nach Score DESC
+// Resources finden, die dieses Topic in ihren topTopics haben
+const resources = await Resource.find({ 'topTopics.topicId': topicId })
+// overlapScore aus dem topTopics-Eintrag entnehmen, nach Score DESC sortieren
+// resources.sort((a, b) => scoreOf(b, topicId) - scoreOf(a, topicId))
 ```
 
 ### DTO-Änderungen
@@ -827,26 +821,26 @@ Status: READY FOR APPROVAL
 
 ### Block O: Source-Model
 
-**O1)** `backend/src/models/Source.ts` — anlegen:
+**O1)** `backend/src/models/Resource.ts` — anlegen:
 ```
-SourceSchema: { _id: Number, typeId, typeName, url, authorId, authorName, title, description, createdAt, updatedAt }
-export const Source = mongoose.model('Source', SourceSchema)
+ResourceSchema: { _id: Number (resourceID=sourceID für PoC), typeId, typeName, url,
+                  authorId, authorName, title, description, createdAt, updatedAt,
+                  topTopics: [{topicId, overlapScore}] (max 5) }
+export const Resource = mongoose.model('Resource', ResourceSchema)
 ```
+Topics bekommen KEIN `topResources`-Feld — Resources zeigen auf Topics, nicht umgekehrt.
 
-**O2)** `backend/src/models/Topic.ts` — `TopicResourceRefSchema` + `topResources`-Feld ergänzen:
-```ts
-TopicResourceRefSchema: { sourceId: Number, overlapScore: Number } (_id: false)
-TopicSchema: topResources: { type: [TopicResourceRefSchema], default: [] }
-```
+**O2)** `backend/src/models/Topic.ts` — keine Änderung nötig (kein Resource-Ref im Topic)
 
-**O3)** `backend/src/models/index.ts` — `Source` re-exportieren
+**O3)** `backend/src/models/index.ts` — `Resource` re-exportieren
 
 → **Commit nach O1–O3:**
 ```
-feat(backend/models): add Source model and topResources ref to Topic;
+feat(backend/models): add Resource model with topTopics assignment;
 
-- Source: _id=sourceId, typeName/authorName denormalized, no tag data
-- Topic.topResources: [{sourceId, overlapScore}] pre-computed at seeding
+- Resource: _id=resourceId (=sourceId for standalone), topTopics=[{topicId,score}]
+- Resources are assigned to Topics (max 5 per resource); Topics are unbounded
+- Topic schema unchanged — no resource refs stored in Topic
 ```
 
 ---
@@ -876,11 +870,12 @@ feat(backend/types): add ResourceDto and type TopicDetailDto.resources
 
 → **Commit nach Q1:**
 ```
-feat(backend/seeder): seed Sources and compute topic-resource overlaps;
+feat(backend/seeder): seed Resources and compute resource-topic overlaps;
 
-- loads t_source, t_source_author, t_source_type, ct_resource_tags
-- computes overlap score = Σ(sourceTagWeight × topicTagWeight) per tag
-- writes top-10 sources per topic into Topic.topResources
+- loads t_source (sa_resource=1 → Resource), t_source_author, t_source_type, ct_resource_tags
+- computes overlap score = Σ(resourceTagWeight × topicTagWeight) per shared tag
+- writes top-5 topics per resource into Resource.topTopics via bulkWrite
+- Resources → Topics direction (Topics unbounded; Resources capped at 5 topics)
 ```
 
 ---

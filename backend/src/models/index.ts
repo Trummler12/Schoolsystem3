@@ -1,3 +1,3 @@
 export { Tag } from './Tag.js'
 export { Topic } from './Topic.js'
-export { Source } from './Source.js'
+export { Resource } from './Resource.js'
